@@ -25,20 +25,38 @@ const globalForDb = globalThis as typeof globalThis & {
 };
 
 function getLocalPgliteClient(): PGlite {
-  const dataDir = path.join(process.cwd(), ".pgdata");
-  const pidFile = path.join(dataDir, "postmaster.pid");
-  if (!globalForDb.__pgliteClient && fs.existsSync(pidFile)) {
-    try {
-      fs.unlinkSync(pidFile);
-    } catch {
-      // ignore
+  if (globalForDb.__pgliteClient) {
+    return globalForDb.__pgliteClient;
+  }
+
+  // In serverless / Vercel, process.cwd() is read-only (/var/task).
+  // Use /tmp for writable filesystem, or in-memory fallback.
+  const isServerless =
+    !!process.env.VERCEL ||
+    !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.cwd().startsWith("/var/task");
+
+  const baseDir = isServerless ? "/tmp" : process.cwd();
+  const dataDir = path.join(baseDir, ".pgdata");
+
+  try {
+    const pidFile = path.join(dataDir, "postmaster.pid");
+    if (fs.existsSync(pidFile)) {
+      try {
+        fs.unlinkSync(pidFile);
+      } catch {
+        // ignore
+      }
     }
-  }
-  const pglite = globalForDb.__pgliteClient ?? new PGlite(dataDir);
-  if (process.env.NODE_ENV !== "production") {
+    const pglite = new PGlite(dataDir);
     globalForDb.__pgliteClient = pglite;
+    return pglite;
+  } catch (err) {
+    console.warn("Falling back to pure in-memory PGlite:", err);
+    const pglite = new PGlite();
+    globalForDb.__pgliteClient = pglite;
+    return pglite;
   }
-  return pglite;
 }
 
 function initLocalDatabase(): Promise<void> {
@@ -47,11 +65,13 @@ function initLocalDatabase(): Promise<void> {
   globalForDb.__usingFallbackPglite = true;
 
   return (async () => {
-    await pglite.waitReady;
-    await initDb(pglite);
-  })().catch((err) => {
-    console.error("Failed to ensure local DB schema:", err);
-  });
+    try {
+      await pglite.waitReady;
+      await initDb(pglite);
+    } catch (err) {
+      console.error("Failed to ensure local DB schema:", err);
+    }
+  })();
 }
 
 function initRemoteDatabase(): Promise<void> {

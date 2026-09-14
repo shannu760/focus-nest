@@ -16,19 +16,27 @@ export async function POST(req: Request) {
     );
   }
 
-  await ensureDbReady();
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  if (!user) {
-    return NextResponse.json({ error: "No account found with this email." }, { status: 401 });
+  try {
+    await ensureDbReady();
+    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    if (!user) {
+      return NextResponse.json({ error: "No account found with this email." }, { status: 401 });
+    }
+
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) {
+      return NextResponse.json({ error: "Incorrect password. Try again." }, { status: 401 });
+    }
+
+    const token = await createSession(user.id);
+    await setSessionCookie(token);
+
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    console.error("Login error:", err);
+    return NextResponse.json(
+      { error: err?.message || "Login failed. Please try again." },
+      { status: 500 }
+    );
   }
-
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) {
-    return NextResponse.json({ error: "Incorrect password. Try again." }, { status: 401 });
-  }
-
-  const token = await createSession(user.id);
-  await setSessionCookie(token);
-
-  return NextResponse.json({ ok: true });
 }
