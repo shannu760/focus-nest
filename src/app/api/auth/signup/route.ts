@@ -40,14 +40,14 @@ export async function POST(req: Request) {
             examTarget: examTarget || existing.examTarget,
           })
           .where(eq(users.id, existing.id));
-        const token = await createSession(existing.id);
+        const token = await createSession(existing);
         await setSessionCookie(token);
         return NextResponse.json({ ok: true, reset: true }, { status: 200 });
       }
 
       const valid = await verifyPassword(password, existing.passwordHash);
       if (valid) {
-        const token = await createSession(existing.id);
+        const token = await createSession(existing);
         await setSessionCookie(token);
         return NextResponse.json({ ok: true, existingUser: true }, { status: 200 });
       }
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
       .values({ name, email, passwordHash, classGrade, examTarget })
       .returning();
 
-    const token = await createSession(user.id);
+    const token = await createSession(user);
     await setSessionCookie(token);
 
     return NextResponse.json({ ok: true }, { status: 201 });

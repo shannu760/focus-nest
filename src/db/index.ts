@@ -8,13 +8,15 @@ import { initDb, initRemoteDb } from "./init";
 
 const databaseUrl = process.env.DATABASE_URL;
 
-const isRemotePostgres =
+const isRemotePostgres = Boolean(
   databaseUrl &&
-  (databaseUrl.includes("supabase.co") ||
-    databaseUrl.includes("neon.tech") ||
-    databaseUrl.includes("aws.com") ||
-    databaseUrl.includes("azure.com") ||
-    (!databaseUrl.includes("127.0.0.1") && !databaseUrl.includes("localhost")));
+    (databaseUrl.includes("supabase.co") ||
+      databaseUrl.includes("neon.tech") ||
+      databaseUrl.includes("prisma.io") ||
+      databaseUrl.includes("aws.com") ||
+      databaseUrl.includes("azure.com") ||
+      (!databaseUrl.includes("127.0.0.1") && !databaseUrl.includes("localhost")))
+);
 
 const globalForDb = globalThis as typeof globalThis & {
   __arenaDb?: any;
@@ -23,6 +25,22 @@ const globalForDb = globalThis as typeof globalThis & {
   __dbInitPromise?: Promise<void>;
   __usingFallbackPglite?: boolean;
 };
+
+export function getRemotePool(): Pool {
+  if (globalForDb.__arenaNextJsPostgresqlPool) {
+    return globalForDb.__arenaNextJsPostgresqlPool;
+  }
+
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+    max: 10,
+  });
+
+  globalForDb.__arenaNextJsPostgresqlPool = pool;
+  return pool;
+}
 
 function getLocalPgliteClient(): PGlite {
   if (globalForDb.__pgliteClient) {
@@ -75,60 +93,36 @@ function initLocalDatabase(): Promise<void> {
 }
 
 function initRemoteDatabase(): Promise<void> {
-  const pool =
-    globalForDb.__arenaNextJsPostgresqlPool ??
-    new Pool({
-      connectionString: databaseUrl,
-      ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 5000,
-    });
-
-  if (process.env.NODE_ENV !== "production") {
-    globalForDb.__arenaNextJsPostgresqlPool = pool;
-  }
+  const pool = getRemotePool();
 
   return (async () => {
     try {
-      // Test connection
       const client = await pool.connect();
       client.release();
       await initRemoteDb(pool);
       globalForDb.__arenaDb = drizzlePg(pool);
       globalForDb.__usingFallbackPglite = false;
-      console.log("✅ Successfully connected to Supabase remote PostgreSQL database!");
+      console.log("✅ Successfully connected to remote PostgreSQL database!");
     } catch (err: any) {
       console.warn(
-        `⚠️ Supabase database unreachable (${err.message}). Falling back to local embedded database.`
+        `⚠️ Remote database unreachable (${err.message}). Falling back to local embedded database.`
       );
       await initLocalDatabase();
     }
   })();
 }
 
-function createDbInstance() {
-  if (isRemotePostgres) {
-    const pool =
-      globalForDb.__arenaNextJsPostgresqlPool ??
-      new Pool({
-        connectionString: databaseUrl,
-        ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5000,
-      });
-    if (process.env.NODE_ENV !== "production") {
-      globalForDb.__arenaNextJsPostgresqlPool = pool;
-    }
-    return drizzlePg(pool);
-  }
-
-  const pglite = getLocalPgliteClient();
-  return drizzlePglite(pglite);
-}
-
-// Default to local embedded database first for immediate resilience
+// Default to remote Postgres immediately when configured, otherwise local PGlite
 if (!globalForDb.__arenaDb) {
-  const pglite = getLocalPgliteClient();
-  globalForDb.__arenaDb = drizzlePglite(pglite);
-  globalForDb.__usingFallbackPglite = true;
+  if (isRemotePostgres) {
+    const pool = getRemotePool();
+    globalForDb.__arenaDb = drizzlePg(pool);
+    globalForDb.__usingFallbackPglite = false;
+  } else {
+    const pglite = getLocalPgliteClient();
+    globalForDb.__arenaDb = drizzlePglite(pglite);
+    globalForDb.__usingFallbackPglite = true;
+  }
 }
 
 export async function ensureDbReady(): Promise<void> {
@@ -152,10 +146,12 @@ ensureDbReady().catch(() => {});
 
 export type Database = ReturnType<typeof drizzlePglite>;
 
-// Dynamic proxy ensuring seamless execution whether connected to Supabase or local fallback
+// Dynamic proxy ensuring seamless execution whether connected to remote DB or local fallback
 export const db: Database = new Proxy({} as Database, {
   get(_target, prop) {
-    const instance = globalForDb.__arenaDb ?? drizzlePglite(getLocalPgliteClient());
+    const instance =
+      globalForDb.__arenaDb ??
+      (isRemotePostgres ? drizzlePg(getRemotePool()) : drizzlePglite(getLocalPgliteClient()));
     const value = instance[prop];
     if (typeof value === "function") {
       return value.bind(instance);
@@ -164,4 +160,4 @@ export const db: Database = new Proxy({} as Database, {
   },
 });
 
-export const pool = globalForDb.__arenaNextJsPostgresqlPool;
+export const pool = isRemotePostgres ? getRemotePool() : undefined;

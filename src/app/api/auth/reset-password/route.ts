@@ -28,7 +28,7 @@ export async function POST(req: Request) {
   const passwordHash = await hashPassword(password);
   await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
 
-  const token = await createSession(user.id);
+  const token = await createSession(user);
   await setSessionCookie(token);
 
   return NextResponse.json({ ok: true });

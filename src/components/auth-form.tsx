@@ -39,7 +39,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         title: mode === "login" ? "Welcome back! 🌱" : "Account created 🎉",
         description: mode === "login" ? "Good to see you again." : "Your study nest is ready.",
       });
-      window.location.href = "/dashboard";
+      window.location.replace("/dashboard");
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : "Please try again.";
       setErrorMessage(msg);
@@ -68,7 +68,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         title: "Password updated & logged in! 🎉",
         description: "Welcome to your study dashboard.",
       });
-      window.location.href = "/dashboard";
+      window.location.replace("/dashboard");
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : "Could not update password.";
       setErrorMessage(msg);
